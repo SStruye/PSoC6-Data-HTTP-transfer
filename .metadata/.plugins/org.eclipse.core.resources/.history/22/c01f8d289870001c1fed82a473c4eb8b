@@ -1,0 +1,54 @@
+
+//=============================================================
+//	-Includes
+//=============================================================
+#include <stdio.h>
+#include "cyhal.h"
+#include "cybsp.h"
+#include "cy_retarget_io.h"
+#include "http_client.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "TFT_task.h"
+#include "ADC_task.h"
+#include "PDM_task.h"
+//=============================================================
+//	-Function: main
+//=============================================================
+int main(void)
+{
+    cy_rslt_t result;
+    //Initialize Board Support Package
+    result = cybsp_init() ;
+    CY_ASSERT(result == CY_RSLT_SUCCESS);
+
+	(void) result;	//Avoid Compiler Warnings
+    __enable_irq();	//Enable Global Interrupts
+
+    // Initialize debug UART
+	cy_retarget_io_init(CYBSP_DEBUG_UART_TX, CYBSP_DEBUG_UART_RX, CY_RETARGET_IO_BAUDRATE);
+
+	printf("\x1b[2J\x1b[;H");
+	printf("============================================================\n\r");
+	printf("IoT Task 2021-2022: ALS And PDM Mic Sensors\n\r");
+	printf("============================================================\n\r");
+
+	//Create Queues
+	tft_q = xQueueCreate( 1, sizeof(int[2]) );
+	http_q = xQueueCreate( 1, sizeof(char[16]) );
+
+	//Create Tasks
+	xTaskCreate(http_task, "HTTP task", 5 * 1024, NULL, 3, NULL);
+	xTaskCreate(ADC_task, "ALS task", configMINIMAL_STACK_SIZE * 2, 0 , 1 , NULL);
+	xTaskCreate(PDM_task, "PDM task", 5 * 1024	, 1 , 0 ,3, NULL );
+	xTaskCreate(TFT_task, "TFT task", configMINIMAL_STACK_SIZE * 4, 0 , 0 , NULL);
+
+	//Start Scheduler
+	vTaskStartScheduler();
+
+	//Should Never Get Here
+	printf("sir? You can't be here");
+	CY_ASSERT(0);
+}
+
+/* [] END OF FILE */

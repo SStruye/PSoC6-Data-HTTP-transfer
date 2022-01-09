@@ -1,0 +1,57 @@
+
+#ifndef SOURCE_AUDIO_TASK_H_
+#define SOURCE_AUDIO_TASK_H_
+
+/*******************************************************************************
+ * Header file includes
+ ******************************************************************************/
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "ADC_task.h"
+/*******************************************************************************
+ * Global constants
+ *******************************************************************************/
+
+/* Define how many samples in a frame */
+#define FRAME_SIZE                  4096u
+/* Desired sample rate. Typical values: 8/16/22.05/32/44.1/48 kHz */
+#define SAMPLE_RATE_HZ              44100u
+/* Decimation Rate */
+#define DECIMATION_RATE             64u
+/* Audio Mode: LEFT / RIGHT / STEREO */
+#define AUDIO_MODE					CYHAL_PDM_PCM_MODE_LEFT
+/* Gain for Left and Right in DB */
+#define GAIN_LEFT					CY_PDM_PCM_BYPASS
+//#define GAIN_RIGHT					CY_PDM_PCM_BYPASS
+#define OCTAVES 					11
+
+#define AUDIO_SYS_CLOCK_HZ          22574000u
+
+/* PDM/PCM Pins */
+#define PDM_DATA                    P10_5
+#define PDM_CLK                     P10_4
+
+/* FFT Custom constants */
+#define FFT_FORWARD 				0x01
+#define FFT_REVERSE 				0x00
+
+/* FFT Windowing type */
+#define FFT_WIN_TYP_HANN 			0x02 /* hann */
+#define FFT_WIN_TYP_FLT_TOP 		0x08 /* flat top */
+
+/* FFT Mathematial constants */
+#define twoPi 						6.28318531
+#define fourPi 						12.56637061
+#define sixPi 						18.84955593
+
+
+static float aWeighting[] = { -56.7, -39.4, -26.2, -16.1, -8.6, -3.2,  0.0,  1.2,  1.0, -1.1, -6.6 };
+static float zWeighting[] = {   0.0,   0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0 };
+
+
+void PDM_task(void* param);
+
+#endif /* SOURCE_AUDIO_TASK_H_ */
+
+/* [] END OF FILE  */

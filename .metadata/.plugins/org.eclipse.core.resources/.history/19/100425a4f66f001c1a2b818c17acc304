@@ -1,0 +1,13 @@
+/*
+ * lwipopts.h
+ *
+ *  Created on: 7 jan. 2022
+ *      Author: seppe
+ */
+
+#ifndef LWIPOPTS_H_
+#define LWIPOPTS_H_
+
+
+
+#endif /* LWIPOPTS_H_ */

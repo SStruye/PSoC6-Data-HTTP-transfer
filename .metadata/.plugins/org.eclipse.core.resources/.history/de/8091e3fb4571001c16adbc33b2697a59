@@ -1,0 +1,158 @@
+
+//=============================================================
+//	-Includes
+//=============================================================
+#include "cyhal.h"
+#include "cybsp.h"
+#include "cy_retarget_io.h"
+#include <FreeRTOS.h>
+#include <task.h>
+#include <semphr.h>
+#include <string.h>
+#include "cy_secure_sockets.h"
+#include "cy_wcm.h"
+#include "cy_wcm_error.h"
+#include "http_client.h"
+#include "cy_http_client_api.h"
+//=============================================================
+//	-HTTP_task: Transfers Sensor Data to MysqlDB via HTTP
+//=============================================================
+
+void http_task(void *arg){
+    cy_rslt_t result;
+	result = connect_to_wifi_ap();
+	CY_ASSERT(result == CY_RSLT_SUCCESS);
+
+    cy_awsport_server_info_t serverInfo;
+	(void) memset(&serverInfo, 0, sizeof(serverInfo));
+    serverInfo.host_name = SERVERHOSTNAME;
+    serverInfo.port = SERVERPORT;
+
+    cy_http_disconnect_callback_t disconnectCallback = (void*)disconnect_callback;
+
+    cy_http_client_t clientHandle;
+    cy_http_client_response_t response;
+
+    uint8_t buffer[BUFFERSIZE];
+    cy_http_client_request_header_t request;
+    request.buffer = buffer;
+    request.buffer_len = BUFFERSIZE;
+    request.method = CY_HTTP_CLIENT_METHOD_POST;
+    request.range_start = -1;
+    request.range_end = -1;
+    request.resource_path = RESOURCE;
+
+    uint32_t num_header = 1;
+    cy_http_client_header_t header[num_header];
+	header[0].field = "Content-Type";
+	header[0].field_len = strlen("Content-Type");
+	header[0].value = "application/x-www-form-urlencoded";
+	header[0].value_len = strlen("application/x-www-form-urlencoded");
+
+    result = cy_http_client_init();
+    if(result != CY_RSLT_SUCCESS){
+    	printf("\x1B[31mHTTP Client Library Initialization Failed!\033[0m\n\r");
+    }
+
+    result = cy_http_client_create(NULL, &serverInfo, disconnectCallback, NULL, &clientHandle);
+    if(result != CY_RSLT_SUCCESS){
+		printf("\x1B[31mHTTP Client Creation Failed!\033[0m\n\r");
+	}
+
+	result = cy_http_client_write_header(clientHandle, &request, header, num_header);
+	if(result != CY_RSLT_SUCCESS){
+		printf("HTTP Client Header Write Failed!\n");
+		CY_ASSERT(0);
+	}
+
+
+	for(;;){
+		char* payload = "val=22&id=3";
+		for(uint32_t conn_retries = 0; conn_retries < 10; conn_retries++ ){
+			result = cy_http_client_connect(clientHandle, SENDRECEIVETIMEOUT, SENDRECEIVETIMEOUT);
+			if(result != CY_RSLT_SUCCESS){
+				printf("\x1B[31mHTTP Client Connection Failed!\033[0m\n\r");
+			}
+			else{
+				printf("\x1B[32mConnected to HTTP Server Successfully!\033[0m\n\r");
+				connected = true;
+				conn_retries = 11;
+			}
+		}
+		if(connected){
+			result = cy_http_client_send(clientHandle, &request, (uint8_t *)payload, (strlen(payload)-1), &response);
+			if(result != CY_RSLT_SUCCESS){
+				printf("\x1B[31mHTTP Client Send Failed!\033[0m\n\r");
+			}
+			else{
+				printf("\x1B[32mHTTP Client Send Success!\033[0m\n\r");
+				result = cy_http_client_disconnect(clientHandle);
+				if(result != CY_RSLT_SUCCESS){
+					printf("\x1B[31mHTTP Client Disconnect Failed!\033[0m\n\r");
+				}
+				else{
+					printf("\x1B[32mHTTP Client Disconnect Succes!\033[0m\n\r");
+				}
+			}
+		}
+		vTaskDelay(100000);
+	}
+
+}
+
+
+
+
+
+//=============================================================
+//	-WiFi_connect: connect to wifi
+//=============================================================
+cy_rslt_t connect_to_wifi_ap(void)
+{
+    cy_rslt_t result;
+
+    cy_wcm_connect_params_t wifi_conn_param;
+    cy_wcm_config_t wifi_config = { .interface = CY_WCM_INTERFACE_TYPE_STA };
+    cy_wcm_ip_address_t ip_address;
+    result = cy_wcm_init(&wifi_config);
+
+    if (result != CY_RSLT_SUCCESS)
+    {
+        printf("\x1B[31mWi-Fi Connection Manager initialization failed!\033[0m\n\r");
+        return result;
+    }
+    printf("\x1b[2J\x1b[;H");
+    printf("Wi-Fi Connection Manager initialized.\n\r");
+
+    memset(&wifi_conn_param, 0, sizeof(cy_wcm_connect_params_t));
+    memcpy(wifi_conn_param.ap_credentials.SSID, WIFI_SSID, sizeof(WIFI_SSID));
+    memcpy(wifi_conn_param.ap_credentials.password, WIFI_PASSWORD, sizeof(WIFI_PASSWORD));
+    wifi_conn_param.ap_credentials.security = WIFI_SECURITY_TYPE;
+
+    for(uint32_t conn_retries = 0; conn_retries < MAX_WIFI_CONN_RETRIES; conn_retries++ )
+    {
+        result = cy_wcm_connect_ap(&wifi_conn_param, &ip_address);
+
+        if(result == CY_RSLT_SUCCESS)
+        {
+            printf("\x1B[32mSuccessfully connected to Wi-Fi network '%s'.\033[0m\n\r",
+                                wifi_conn_param.ap_credentials.SSID);
+            printf("IP Address Assigned: %d.%d.%d.%d\n\r\r", (uint8)ip_address.ip.v4,
+                    (uint8)(ip_address.ip.v4 >> 8), (uint8)(ip_address.ip.v4 >> 16),
+                    (uint8)(ip_address.ip.v4 >> 24));
+            return result;
+        }
+        printf("\x1B[31mConnection to Wi-Fi network failed with error code %d."
+               "Retrying in %d ms...\033[0m\n\r", (int)result, WIFI_CONN_RETRY_INTERVAL_MSEC);
+        vTaskDelay(pdMS_TO_TICKS(WIFI_CONN_RETRY_INTERVAL_MSEC));
+    }
+    printf("\x1B[31mExceeded maximum Wi-Fi connection attempts\033[0m\n\r");
+    return result;
+}
+//=============================================================
+//	-disconnect_callback: event on disconnect
+//=============================================================
+void disconnect_callback(void *arg){
+	printf("\x1B[31mDisconnect Callback Called\033[0m\n\r");
+    connected = false;
+}

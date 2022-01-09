@@ -1,0 +1,10 @@
+
+#ifndef TFT_TASK_H_
+#define TFT_TASK_H_
+#include "ADC_task.h"
+#include "GUI.h"
+#include "mtb_st7789v.h"
+
+void TFT_task(void *arg);
+
+#endif /* TFT_TASK_H_ */

@@ -1,0 +1,91 @@
+/******************************************************************************
+* File Name:   main.c
+*
+* Description: This is the source code for the Empty PSoC6 Application
+*              for ModusToolbox.
+*
+* Related Document: See README.md
+*
+*
+*******************************************************************************
+* (c) 2019-2020, Cypress Semiconductor Corporation. All rights reserved.
+*******************************************************************************
+
+/* Header file includes. */
+#include "cy_pdl.h"
+#include "cyhal.h"
+#include "cybsp.h"
+#include "cy_retarget_io.h"
+
+/* FreeRTOS header file. */
+#include <FreeRTOS.h>
+#include <task.h>
+
+/* TCP client task header file. */
+#include "http_client.h"
+
+/*******************************************************************************
+* Macros
+********************************************************************************/
+/* RTOS related macros. */
+#define HTTP_CLIENT_TASK_STACK_SIZE        (5 * 1024)
+#define HTTP_CLIENT_TASK_PRIORITY          (1)
+
+/*******************************************************************************
+* Global Variables
+********************************************************************************/
+/* This enables RTOS aware debugging. */
+volatile int uxTopUsedPriority;
+
+/* HTTP Client task handle. */
+TaskHandle_t client_task_handle;
+
+/*******************************************************************************
+* Function Name: main
+********************************************************************************
+* Summary:
+*  System entrance point. This function sets up user tasks and then starts
+*  the RTOS scheduler.
+*
+* Parameters:
+*  void
+*
+* Return:
+*  int
+*
+*******************************************************************************/
+int main(void)
+{
+    cy_rslt_t result;
+
+    /* This enables RTOS aware debugging in OpenOCD. */
+	uxTopUsedPriority = configMAX_PRIORITIES - 1;
+
+    /* Initialize the device and board peripherals */
+    result = cybsp_init() ;
+    CY_ASSERT(result == CY_RSLT_SUCCESS);
+
+    /* To avoid compiler warnings. */
+	(void) result;
+
+	/* Enable global interrupts. */
+    __enable_irq();
+
+    /* Initialize retarget-io to use the debug UART port. */
+	cy_retarget_io_init(CYBSP_DEBUG_UART_TX, CYBSP_DEBUG_UART_RX, CY_RETARGET_IO_BAUDRATE);
+
+	/* \x1b[2J\x1b[;H - ANSI ESC sequence to clear screen. */
+	printf("\x1b[2J\x1b[;H");
+	printf("============================================================\n\r");
+	printf("ModusToolbox-Level3-WiFi - 4B: POST to httpbin.org\n\r");
+	printf("============================================================\n\r");
+
+	//create task
+	xTaskCreate(http_client_task, "Network task", HTTP_CLIENT_TASK_STACK_SIZE, NULL, HTTP_CLIENT_TASK_PRIORITY, &client_task_handle);
+
+	//start scheduler
+	vTaskStartScheduler();
+	CY_ASSERT(0);
+}
+
+/* [] END OF FILE */

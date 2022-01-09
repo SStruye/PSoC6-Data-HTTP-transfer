@@ -1,0 +1,46 @@
+
+//=============================================================
+//	-Includes
+//=============================================================
+#include "ADC_task.h"
+
+int avg = 0;
+int cnt = 0;
+//=============================================================
+//	-ADC_task: Anlg to Digtl of Ambient Light Sensor
+//=============================================================
+void ADC_task(void *arg){
+    int adc_out[2] = {1,0};
+
+    const cyhal_adc_channel_config_t channel_config = {
+				.enable_averaging = false,
+				.min_acquisition_ns = 220,
+				.enabled = true };
+
+    cyhal_adc_init(&adc_obj, P10_0, NULL);
+	cyhal_adc_channel_init_diff(&adc_chan_0_obj, &adc_obj, P10_0, CYHAL_ADC_VNEG,&channel_config);
+
+
+ 	for(;;){
+ 	 	adc_out[1] = (cyhal_adc_read_uv(&adc_chan_0_obj)/1000)*3.4453125;
+
+ 	 	cnt++;
+ 	 	if(avg == 0){
+ 	 		avg = adc_out[1];
+ 	 	}
+ 	 	else{
+ 	 		avg = (avg+adc_out[1])/2;
+ 	 	}
+ 	 	if(cnt == 600){
+ 	 	 	char str[20];
+ 			sprintf(str, "val=%d&sid=1", avg);
+ 			xQueueSend(http_q, &str, ( TickType_t ) 10);
+ 			printf("ALS put in queue\n\r");
+ 			avg = 0;
+ 			cnt = 0;
+ 	 	}
+
+ 	 	xQueueSend(tft_q, &adc_out, ( TickType_t ) 10);
+ 		vTaskDelay(400);
+ 	}
+}

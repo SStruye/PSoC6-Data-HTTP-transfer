@@ -1,0 +1,310 @@
+
+//=============================================================
+//	-Includes
+//=============================================================
+#include "cybsp.h"
+#include "cyhal.h"
+#include "cycfg.h"
+#include "cy_retarget_io.h"
+#include "stdlib.h"
+#include "stddef.h"
+#include "math.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "PDM_task.h"
+//=============================================================
+//	-objects
+//=============================================================
+cyhal_pdm_pcm_t pdm_pcm;
+cyhal_clock_t audio_clock;
+cyhal_clock_t pll_clock;
+//=============================================================
+//	-PDM config
+//=============================================================
+const cyhal_pdm_pcm_cfg_t pdm_pcm_cfg = {
+		.sample_rate = SAMPLE_RATE_HZ,
+		.decimation_rate = DECIMATION_RATE,
+		.mode = AUDIO_MODE,
+		.word_length = 16, /* bits */
+		.left_gain = GAIN_LEFT, /* dB */
+		//.right_gain = GAIN_RIGHT, /* dB */
+};
+//=============================================================
+//	-Variables
+//=============================================================
+int16_t audio_frame[FRAME_SIZE] = { 0 };
+float audio_real[FRAME_SIZE];
+float audio_imag[FRAME_SIZE];
+float audio_energy[OCTAVES];
+
+float audio_z_spectrum[OCTAVES + 1] = { 0.0 };
+float audio_a_spectrum[OCTAVES + 1] = { 0.0 };
+int count = 0;
+float average = 0;
+volatile bool pdm_pcm_flag = false;
+int pdm_out[2] = {1,0};
+//=============================================================
+//	-PDM_task: Read PDM Mic with PDM converter
+//=============================================================
+void PDM_task(void* param) {
+	clock_init();
+	cyhal_pdm_pcm_init(&pdm_pcm, PDM_DATA, PDM_CLK, &audio_clock, &pdm_pcm_cfg);
+	cyhal_pdm_pcm_register_callback(&pdm_pcm, pdm_pcm_isr_handler, NULL);
+	cyhal_pdm_pcm_enable_event(&pdm_pcm, CYHAL_PDM_PCM_ASYNC_COMPLETE,
+			CYHAL_ISR_PRIORITY_DEFAULT, true);
+	cyhal_pdm_pcm_start(&pdm_pcm);
+
+	cyhal_pdm_pcm_read_async(&pdm_pcm, audio_frame, FRAME_SIZE);
+
+	for (;;) {
+		if (pdm_pcm_flag) {
+			/* Clear the PDM/PCM flag */
+			pdm_pcm_flag = false;
+			/* Convert the 16 bit integer to a float */
+			soundsensor_integerToFloat(audio_frame, audio_real, audio_imag,
+					FRAME_SIZE);
+			/* apply HANN window, optimal for energy calculations */
+			FFT_Windowing(FFT_WIN_TYP_HANN, FFT_FORWARD, audio_real,
+					FRAME_SIZE);
+			/* do FFT processing */
+			FFT_Compute(FFT_FORWARD, audio_real, audio_imag, FRAME_SIZE);
+			/* calculate energy */
+			soundsensor_calculateEnergy(audio_real, audio_imag, FRAME_SIZE);
+			/* calculate energy */
+			soundsensor_calculateEnergy(audio_real, audio_imag, FRAME_SIZE);
+			/* sum up energy in bin for each octave */
+			soundsensor_sumEnergy(audio_real, audio_energy, FRAME_SIZE,
+					OCTAVES);
+			/* update the spectrum with new measurements */
+			soundsensor_loudnessWeighting(audio_energy, zWeighting,
+					audio_z_spectrum, OCTAVES);
+			soundsensor_loudnessWeighting(audio_energy, aWeighting,
+					audio_a_spectrum, OCTAVES);
+
+			/* calculate the dB */
+			soundsensor_toDecibel(audio_z_spectrum, OCTAVES);
+			soundsensor_toDecibel(audio_a_spectrum, OCTAVES);
+
+//no tft
+//			char str[20];
+//			sprintf(str, "val=%.1f&sid=2", audio_a_spectrum[OCTAVES]);
+//			xQueueSend(http_q, &str, ( TickType_t ) 10);
+//			printf("\r\x1B[34mPDM put in queue\033[0m\n\r");
+//			cyhal_pdm_pcm_read_async(&pdm_pcm, audio_frame, FRAME_SIZE);
+
+			count++;
+	 	 	if(average == 0){
+	 	 		average = audio_a_spectrum[OCTAVES];
+	 	 	}
+	 	 	else{
+	 	 		average = (average+audio_a_spectrum[OCTAVES])/2;
+	 	 	}
+
+	 	 	if(count == 100){
+	 	 	 	char str[20];
+	 			sprintf(str, "val=%.1f&sid=2", average);
+	 			xQueueSend(http_q, &str, ( TickType_t ) 10);
+	 			printf("\r\x1B[34mPDM put in queue\033[0m\n\r");
+	 			average = 0;
+	 			count = 0;
+	 	 	}
+
+	 	 	pdm_out[1] = audio_a_spectrum[OCTAVES];
+	 	 	xQueueSend(tft_q, &pdm_out, ( TickType_t ) 10);
+			cyhal_pdm_pcm_read_async(&pdm_pcm, audio_frame, FRAME_SIZE);
+		}
+		vTaskDelay(1000);
+	}
+}
+//=============================================================
+//	-PDM isr handler
+//=============================================================
+void pdm_pcm_isr_handler(void *arg, cyhal_pdm_pcm_event_t event) {
+	(void) arg;
+	(void) event;
+
+	pdm_pcm_flag = true;
+}
+//=============================================================
+//	-Clock initialization
+//=============================================================
+void clock_init(void) {
+	cyhal_clock_get(&pll_clock, &CYHAL_CLOCK_PLL[0]);
+	cyhal_clock_init(&pll_clock);
+	cyhal_clock_set_frequency(&pll_clock, AUDIO_SYS_CLOCK_HZ, NULL);
+	cyhal_clock_set_enabled(&pll_clock, true, true);
+
+	cyhal_clock_get(&audio_clock, &CYHAL_CLOCK_HF[1]);
+	cyhal_clock_init(&audio_clock);
+
+	cyhal_clock_set_source(&audio_clock, &pll_clock);
+	cyhal_clock_set_enabled(&audio_clock, true, true);
+}
+//=============================================================
+//	-Int to Float conversion
+//=============================================================
+void soundsensor_integerToFloat(int16_t *samples, float *vReal, float *vImag,
+		uint16_t size) {
+	int bit_size = 8;
+	for (uint16_t i = 0; i < size; i++) {
+		vReal[i] = (float) ((samples[i] / pow(2, bit_size - 1)));
+		vImag[i] = 0.0;
+	}
+}
+//=============================================================
+//	-FFT windowing
+//=============================================================
+void FFT_Windowing(uint8_t windowType, uint8_t dir, float *vReal,
+		uint16_t size) {
+	double samplesMinusOne = (double) size - 1.0;
+	for (uint16_t i = 0; i < (size >> 1); i++) {
+		double indexMinusOne = (double) i;
+		double ratio = (indexMinusOne / samplesMinusOne);
+		double weightingFactor = 1.0;
+		switch (windowType) {
+		case FFT_WIN_TYP_HANN: {
+			weightingFactor = 0.54 * (1.0 - cos(twoPi * ratio));
+			break;
+		}
+		default: /* Invalid command */
+		{
+			break;
+		}
+		}
+		if (dir == FFT_FORWARD) {
+			vReal[i] *= weightingFactor;
+			vReal[size - (i + 1)] *= weightingFactor;
+		} else {
+			vReal[i] /= weightingFactor;
+			vReal[size - (i + 1)] /= weightingFactor;
+		}
+	}
+}
+//=============================================================
+//	-FFT compute
+//=============================================================
+void FFT_Compute(uint8_t dir, float *vReal, float *vImag, uint16_t size) {
+	uint16_t j = 0;
+	for (uint16_t i = 0; i < (size - 1); i++) {
+		if (i < j) {
+			FFT_Swap(&vReal[i], &vReal[j]);
+			if (dir == FFT_REVERSE)
+				FFT_Swap(&vImag[i], &vImag[j]);
+		}
+		uint16_t k = (size >> 1);
+		while (k <= j) {
+			j -= k;
+			k >>= 1;
+		}
+		j += k;
+	}
+	/* Compute the FFT  */
+	double c1 = -1.0;
+	double c2 = 0.0;
+	uint16_t l2 = 1;
+	for (uint8_t l = 0; (l < FFT_Exponent(size)); l++) {
+		uint16_t l1 = l2;
+		l2 <<= 1;
+		double u1 = 1.0;
+		double u2 = 0.0;
+		for (j = 0; j < l1; j++) {
+			for (uint16_t i = j; i < size; i += l2) {
+				uint16_t i1 = i + l1;
+				double t1 = u1 * vReal[i1] - u2 * vImag[i1];
+				double t2 = u1 * vImag[i1] + u2 * vReal[i1];
+				vReal[i1] = vReal[i] - t1;
+				vImag[i1] = vImag[i] - t2;
+				vReal[i] += t1;
+				vImag[i] += t2;
+			}
+			double z = ((u1 * c1) - (u2 * c2));
+			u2 = ((u1 * c2) + (u2 * c1));
+			u1 = z;
+		}
+		c2 = sqrt((1.0 - c1) / 2.0);
+		c1 = sqrt((1.0 + c1) / 2.0);
+		if (dir == FFT_FORWARD) {
+			c2 = -c2;
+		}
+	}
+	/* Scaling for reverse transform */
+	if (dir != FFT_FORWARD) {
+		for (uint16_t i = 0; i < size; i++) {
+			vReal[i] /= size;
+			vImag[i] /= size;
+		}
+	}
+}
+//=============================================================
+//	-Energy calculation
+//=============================================================
+void soundsensor_calculateEnergy(float *vReal, float *vImag, uint16_t size) {
+	for (uint16_t i = 0; i < size / 2; i++) {
+		vReal[i] = sqrt(sq(vReal[i]) + sq(vImag[i]));
+	}
+}
+void soundsensor_sumEnergy(const float *vReal, float *vEnergy, uint16_t size, uint16_t octaves) {
+	int bin_size = 1;
+
+	int bin = bin_size;
+	for (int octave = 0; octave < octaves; octave++) {
+		float sum = 0.0;
+		for (int i = 0; i < bin_size && bin < size / 2; i++) {
+			sum += vReal[bin++];
+		}
+		vEnergy[octave] = (sum / bin_size);
+		bin_size *= 2;
+	}
+}
+//=============================================================
+//	-Weighting calculation
+//=============================================================
+void soundsensor_loudnessWeighting(float *vEnergy, float *weighting,
+		float *spectrum, uint16_t octaves) {
+	float calc_energy = 0.0;
+	for (int i = 0; i < octaves; i++) {
+		calc_energy = vEnergy[i] * sqrt(pow(10, weighting[i] / 10.0));
+		spectrum[i] = (calc_energy > 1 ? calc_energy : 1);
+	}
+}
+//=============================================================
+//	-Sensor to Decibel Conversion
+//=============================================================
+void soundsensor_toDecibel(float *spectrum, uint16_t octaves) {
+	float full_spectrum = 0.0;
+
+	/* calculate for each band the dB */
+	for (int i = 0; i < octaves; i++) {
+		full_spectrum += spectrum[i];
+		spectrum[i] = 20.0 * log10(spectrum[i]);
+	}
+	/* this is the total over all octaves */
+	spectrum[octaves] = 20.0 * log10(full_spectrum);
+}
+//=============================================================
+//	-squared
+//=============================================================
+float sq(float num) {
+	return (num * num);
+}
+//=============================================================
+//	-FFT exponent
+//=============================================================
+uint8_t FFT_Exponent(uint16_t value) {
+	uint8_t result = 0;
+	while (((value >> result) & 1) != 1)
+		result++;
+	return (result);
+}
+//=============================================================
+//	-FFT swap
+//=============================================================
+void FFT_Swap(float *x, float *y) {
+	float temp = *x;
+	*x = *y;
+	*y = temp;
+}
+
+
+

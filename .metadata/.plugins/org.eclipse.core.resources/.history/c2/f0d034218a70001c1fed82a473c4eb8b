@@ -1,0 +1,38 @@
+
+//=============================================================
+//	-Includes
+//=============================================================
+#include "TFT_task.h"
+#include "TFT_pins.h"
+//=============================================================
+//	-TFT_task: display sensor values on TFT display
+//=============================================================
+void TFT_task(void *arg){
+	int32_t buffer[2];
+	int PDM_out;
+
+	mtb_st7789v_init8(&tft_pins);
+
+    GUI_Init();
+    GUI_SetFont(GUI_FONT_24B_1);
+    GUI_SetColor(GUI_WHITE);
+    GUI_SetBkColor(GUI_BLACK);
+    GUI_Clear();
+    GUI_DispStringAt("Light Sensor", 20, 20);
+	GUI_DispStringAt("Decibels", 20, 50);
+    GUI_DispStringAt(":", 155, 20);
+	GUI_DispStringAt(":", 155, 50);
+	GUI_DispStringAt("Lux", 220, 20);
+	GUI_DispStringAt("dB", 220, 50);
+
+    for(;;)
+    {
+    	xQueueReceive(tft_q, &buffer,portMAX_DELAY);
+    	if(buffer[0] == 1){
+    		GUI_DispDecAt(buffer[1],170, 20, 4);
+    	}
+    	else if(buffer[0]==2){
+    		GUI_DispDecAt(buffer[1],170, 50, 4);
+    	}
+    }
+}

@@ -1,0 +1,23 @@
+
+#ifndef HTTP_CLIENT_H_
+#define HTTP_CLIENT_H_
+
+#include "ADC_task.h"
+
+#define WIFI_SSID							"Duhaso"
+#define WIFI_PASSWORD						"Lola en Titus"
+
+#define SERVERHOSTNAME						"+++www.12001895.pxl-ea-ict.be"
+#define SERVERPORT							(80)
+
+#define BUFFERSIZE							(2048 * 2)
+#define SENDRECEIVETIMEOUT					(5000)
+#define RESOURCE							"/task_IoT/collector.php"
+
+#define WIFI_SECURITY_TYPE                 	CY_WCM_SECURITY_WPA2_AES_PSK
+#define MAX_WIFI_CONN_RETRIES             	(10u)
+#define WIFI_CONN_RETRY_INTERVAL_MSEC     	(1000)
+
+void http_task(void *arg);
+
+#endif /* HTTP_CLIENT_H_ */
